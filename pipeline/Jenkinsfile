@@ -1,0 +1,51 @@
+@Library('internal-jenkins-lib') _
+
+def ENV_PARAMETERS = env_parameters AWS_REGION, ENVIRONMENT
+
+pipeline {
+    agent any
+    options { 
+        timeout(time: 180, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '100'))
+    }
+    parameters {
+        string(name: 'REPO_BRANCH', defaultValue: 'master', description: 'Name of git branch to use', trim: true)
+        choice(name: 'ENVIRONMENT', choices: ['qa', 'uat', 'prod'], description: 'Environment identifier')
+        choice(name: 'AWS_REGION', choices: ['us-east-1','us-west-2'], description: 'AWS Region to deploy the stack')
+        string(name: 'ENV_INSTANCE', defaultValue: '', description: 'Environment instance identifier, e.g. 1, 2, 3', trim: true)
+    }
+
+    stages {
+        stage('Validate EBS Stack') {
+            steps {
+                script {
+                    currentBuild.displayName = "#${BUILD_NUMBER}-${ENVIRONMENT}-${ENV_INSTANCE}"
+
+                    withAWS(role: "${ENV_PARAMETERS['DeploymentRole']}", roleAccount: "${ENV_PARAMETERS['AwsAccount']}", duration: 10800, region: "${AWS_REGION}") {
+
+                        sh """
+                        python3 pipeline/ebs_encrypt.py --stage validate --environment "${ENVIRONMENT}" --env-instance "${ENV_INSTANCE}"
+                        """
+                    }
+                }
+            }
+        }
+        stage('Encrypt EBS Stack') {
+            steps {
+                script {
+                    withAWS(role: "${ENV_PARAMETERS['DeploymentRole']}", roleAccount: "${ENV_PARAMETERS['AwsAccount']}", duration: 10800, region: "${AWS_REGION}") {
+
+                        sh """
+                        python3 pipeline/ebs_encrypt.py --stage encrypt --environment "${ENVIRONMENT}" --env-instance "${ENV_INSTANCE}"
+                        """
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}
